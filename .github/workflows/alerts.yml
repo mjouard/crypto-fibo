@@ -1,0 +1,39 @@
+name: Alertes Plan Fibonacci
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # tous les jours vers 8 h 17 (heure de Paris, été)
+  workflow_dispatch: {}      # bouton « Run workflow » pour lancer à la main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: alerts
+  cancel-in-progress: false
+
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas numpy requests
+      - name: Mise à jour des cours et alertes
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          APP_URL: ${{ vars.APP_URL }}
+        run: python alerts.py
+      - name: Enregistrer les données à jour
+        run: |
+          git config user.name "plan-fibo-bot"
+          git config user.email "plan-fibo-bot@users.noreply.github.com"
+          git add data alerts_state.json
+          git diff --staged --quiet || (git commit -m "Données du $(date -u +%F)" && git push)

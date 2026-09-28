@@ -73,3 +73,22 @@ Streamlit a besoin d'un serveur qui tourne en continu : Railway convient, Vercel
 Les fichiers `data/*.csv` du dépôt servent de point de départ. À chaque redéploiement, l'app repart de ces fichiers
 et récupère tout seule les jours manquants. Pas besoin de volume. Pour éviter un rattrapage trop long,
 tu peux de temps en temps lancer `python data_update.py` en local et pousser les CSV mis à jour sur GitHub.
+
+## Alertes e-mail (GitHub Actions, gratuit)
+
+`alerts.py` tourne chaque jour vers 8 h (heure de Paris) grâce à `.github/workflows/alerts.yml`. Il :
+1. récupère les derniers cours et recalcule tout ;
+2. envoie un e-mail si, depuis la veille, une zone d'achat ou de vente Fibonacci a été touchée,
+   si le prix est à moins de 5 % d'un niveau (une seule fois par niveau), si un nouvel ATH démarre un cycle,
+   ou si un point d'or (entrée ou sortie) s'allume ;
+3. enregistre les données à jour dans le dépôt (ce qui redéploie aussi l'app Streamlit avec des données fraîches).
+
+Configuration, dans le dépôt GitHub → **Settings → Secrets and variables → Actions** :
+- Secrets : `SMTP_USER` (ton adresse Gmail), `SMTP_PASSWORD` (un **mot de passe d'application** Gmail, pas ton mot de passe habituel),
+  `MAIL_TO` (l'adresse qui reçoit les alertes). Optionnel : `SMTP_HOST`, `SMTP_PORT` pour un autre fournisseur (défaut Gmail, port 465).
+- Variable (onglet Variables) : `APP_URL` = l'adresse de ton app Streamlit, pour avoir un lien dans l'e-mail.
+
+Le premier passage envoie un e-mail « Alertes activées » avec l'état actuel. Pour le lancer tout de suite :
+onglet **Actions → Alertes Plan Fibonacci → Run workflow**.
+
+Test en local sans envoyer d'e-mail : `DRY_RUN=1 python alerts.py`.
