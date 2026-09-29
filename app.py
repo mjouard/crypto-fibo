@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import core
 import data_update
+import sim
 
 st.set_page_config(page_title="Plan Fibonacci crypto", layout="wide")
 
@@ -259,6 +260,89 @@ def render(k):
                                    for t in reversed(f["trades"])]), hide_index=True, width="stretch")
 
 
-for k, tab in zip(ASSETS, st.tabs(ASSETS)):
+@st.cache_data(show_spinner=False)
+def sim_markets(stamp: tuple):
+    return sim.load_markets()
+
+
+@st.cache_data(show_spinner="Simulation en cours…")
+def sim_run(stamp, start, capital, pocket_amt, liq, pocket, inject, stake, stable_rate, bot_years):
+    btc, gold, qqq = sim_markets(stamp)
+    F = sim.factors(btc.index, gold, qqq, stable_rate, dict(bot_years))
+    return sim.run(btc, F, start, capital, pocket_amt, liq, pocket, inject, stake)
+
+
+def render_sim():
+    st.caption("Stratégie Fibonacci sur BTC, avec la liquidité en attente placée quelque part et, en option, une poche séparée "
+               "(bot de trading, or…) dont les gains sont réinjectés en BTC à chaque palier d'achat. "
+               "Simulation sur le passé : ce n'est pas un conseil d'investissement.")
+    btc, gold, qqq = sim_markets(stamp)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        start = st.date_input("Date de départ", value=dt.date(2021, 4, 10), min_value=dt.date(2016, 1, 1),
+                              max_value=(btc.index[-1] - pd.Timedelta(days=30)).date(), format="DD/MM/YYYY")
+        capital = st.number_input("Capital total ($)", min_value=1000, value=14000, step=1000)
+    with c2:
+        liq = st.selectbox("Placement de la liquidité en attente", list(sim.PLACEMENTS), index=2, format_func=sim.PLACEMENTS.get)
+        stake = st.number_input("Staking sur les BTC détenus (%/an)", min_value=0.0, max_value=15.0, value=2.0, step=0.5)
+        stable_rate = st.number_input("Rendement stablecoins / monétaire (%/an)", min_value=0.0, max_value=20.0, value=4.0, step=0.5)
+    with c3:
+        pocket_amt = st.number_input("Poche séparée ($, 0 = aucune)", min_value=0, max_value=int(capital) - 500, value=4000, step=500)
+        pocket = st.selectbox("Contenu de la poche", list(sim.POCKETS), index=0, format_func=sim.POCKETS.get, disabled=pocket_amt == 0)
+        inject = st.checkbox("Réinjecter les gains de la poche en BTC à chaque palier d'achat", value=True, disabled=pocket_amt == 0)
+    bot_years = sim.BOT_YEARS
+    if pocket_amt and pocket == "bot":
+        with st.expander("Rendements annuels du bot (modifiables)"):
+            st.caption("Par défaut : portefeuille BTC/ETH/SOL du projet BotCrypto (FINDINGS, 26/09/2026), hors échantillon à partir d'avril 2021. "
+                       "Avant, la poche reste en cash. Le rendement de chaque année est réparti uniformément sur l'année.")
+            ed = st.data_editor(pd.DataFrame({"Année": list(bot_years), "Rendement (%)": list(bot_years.values())}),
+                                hide_index=True, disabled=["Année"], key="bot_years")
+            bot_years = {int(a): float(r) for a, r in zip(ed["Année"], ed["Rendement (%)"])}
+    args = (str(start), float(capital), float(pocket_amt), liq, pocket, bool(inject), float(stake), float(stable_rate), tuple(bot_years.items()))
+    E, inj, orders = sim_run(stamp, *args)
+    if E.empty:
+        st.warning("Pas assez de données après cette date.")
+        return
+    last = E.iloc[-1]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Valeur finale", fprice(last.total), f"×{str(round(last.total / capital, 2)).replace('.', ',')} le capital", delta_color="off")
+    m2.metric("Buy & hold BTC", fprice(last.buy_hold), f"pire baisse {fpct(sim.max_dd(E.buy_hold))}", delta_color="off")
+    m3.metric("Pire baisse de la stratégie", fpct(sim.max_dd(E.total)), None)
+    m4.metric("BTC détenus", f"{last.btc:.4f}".replace(".", ","), f"+ {fprice(last.liquidite)} de liquidité" + (f", {fprice(last.poche)} en poche" if pocket_amt else ""), delta_color="off")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=E.index, y=E.btc * E.prix, stackgroup="v", name="BTC", line=dict(width=0, color="#f2a900")))
+    fig.add_trace(go.Scatter(x=E.index, y=E.liquidite, stackgroup="v", name="Liquidité placée", line=dict(width=0, color="#7f9cc4")))
+    if pocket_amt:
+        fig.add_trace(go.Scatter(x=E.index, y=E.poche, stackgroup="v", name="Poche séparée", line=dict(width=0, color="#9b7fc4")))
+    fig.add_trace(go.Scatter(x=E.index, y=E.buy_hold, name="Buy & hold BTC", line=dict(color=INK, width=1.5, dash="dot")))
+    for d, g in inj:
+        fig.add_annotation(x=d, y=E.total.loc[d], text=f"injection {fnum(g)} $", showarrow=True, arrowhead=2, font=dict(size=10))
+    fig.update_layout(height=460, margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified",
+                      legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0), yaxis=dict(title="$", gridcolor="rgba(128,128,128,0.15)"))
+    st.plotly_chart(fig, width="stretch")
+
+    st.subheader("Comparaison des placements de la liquidité")
+    st.caption("Même date de départ, même capital, même poche : seul le placement de la liquidité change.")
+    rows = []
+    for key, lab in sim.PLACEMENTS.items():
+        Ek, _, _ = sim_run(stamp, args[0], args[1], args[2], key, *args[4:])
+        rows.append({"Liquidité": lab, "Valeur finale": Ek.total.iloc[-1], "BTC détenus": Ek.btc.iloc[-1],
+                     "Pire baisse": sim.max_dd(Ek.total), "_sel": key == liq})
+    R = pd.DataFrame(rows).sort_values("Valeur finale", ascending=False)
+    R["Liquidité"] = [("▶ " if s else "") + l for l, s in zip(R["Liquidité"], R["_sel"])]
+    st.dataframe(pd.DataFrame({"Liquidité": R["Liquidité"], "Valeur finale": R["Valeur finale"].map(fprice),
+                               "BTC détenus": R["BTC détenus"].map(lambda v: f"{v:.4f}".replace(".", ",")),
+                               "Pire baisse": R["Pire baisse"].map(fpct)}), hide_index=True, width="stretch")
+    with st.expander("Ordres Fibonacci et injections sur la période"):
+        st.dataframe(pd.DataFrame([{"Date": fdate(d), "Ordre": t, "Prix BTC": fprice(p), "Montant": fprice(v), "Motif": w}
+                                   for d, t, p, v, w in reversed(orders)]), hide_index=True, width="stretch")
+    st.caption(f"Données : BTC jusqu'au {fdate(btc.index[-1])} ; or (moyennes mensuelles interpolées, puis PAXG) et Nasdaq-100 "
+               f"(QQQ mensuel interpolé, puis quotidien) mis à jour avec les autres cours. Nasdaq ×2 reconstruit à partir du Nasdaq "
+               "(frais 0,95 %, coût du financement, érosion du levier quotidien). Frais : 0,1 % par ordre BTC, 0,25 %/an sur l'or, "
+               "dividendes Nasdaq ~0,5 %/an. Montants en dollars, avant impôts.")
+
+
+for k, tab in zip(ASSETS + ["Simulations"], st.tabs(ASSETS + ["Simulations"])):
     with tab:
-        render(k)
+        render(k) if k in ASSETS else render_sim()

@@ -47,14 +47,26 @@ python data_update.py
 
 - `app.py` : interface Streamlit.
 - `core.py` : calculs (cycles, stratégie, radar BTC, points d'or des altcoins).
-- `data_update.py` : récupération des cours récents.
-- `data/` : historique des clôtures journalières (BTC depuis 2010) et données on-chain BTC.
+- `data_update.py` : récupération des cours récents (cryptos, or via PAXG, Nasdaq-100 via QQQ).
+- `sim.py` : moteur de l'onglet Simulations (Fibonacci BTC + placement de la liquidité + poche séparée).
+- `data/` : historique des clôtures journalières (BTC depuis 2010), données on-chain BTC, or (`gold.csv`) et Nasdaq-100 (`qqq.csv`).
+
+## Onglet Simulations
+
+Rejoue la stratégie Fibonacci sur BTC depuis la date de ton choix, avec :
+- la liquidité en attente placée en cash, stablecoins, or, Nasdaq-100, Nasdaq-100 ×2 ou un mélange ;
+- du staking sur les BTC détenus ;
+- une poche séparée (bot de trading, or, Nasdaq…) dont les gains sont réinjectés en BTC à chaque palier d'achat.
+
+Les rendements annuels du bot sont ceux du projet BotCrypto (modifiables dans l'onglet).
 
 ## Limites
 
 - Les données on-chain BTC (MVRV, Puell) viennent de Coin Metrics et s'arrêtent au 23 mai 2026 ;
   au-delà, la capitalisation réalisée est prolongée par sa tendance. Le score BTC perd donc un peu en précision avec le temps.
 - Les cours récents sont en USDT (Binance) : écart négligeable avec l'USD.
+- Simulations : l'or et le Nasdaq sont des moyennes / clôtures mensuelles interpolées jusqu'en 2025 (quotidiennes ensuite),
+  le Nasdaq ×2 est reconstruit (pas le vrai ETF), le bot est modélisé par ses rendements annuels, sans impôts.
 - Les seuils des points d'or ont été calés sur l'historique : les résultats passés sont optimistes.
 - Ce n'est pas un conseil d'investissement.
 
